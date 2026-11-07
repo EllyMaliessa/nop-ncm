@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Networking Room – IMS613 Individual Assignment</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#0b0e12;font-family:'IBM Plex Sans',system-ui,sans-serif;color:#e8eef5}
+canvas{display:block;touch-action:none;cursor:grab}
+button{font:inherit;color:#e8eef5;background:#1c2530;border:1px solid #33465a;border-radius:6px;padding:7px 12px;cursor:pointer}
+button:hover,button.on{background:#0f6b8a;border-color:#4fc3e8}
+button:focus-visible{outline:2px solid #ffb02e;outline-offset:2px}
+#hud{position:fixed;top:12px;right:12px;display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;max-width:70vw}
+#cap{position:fixed;left:16px;bottom:16px;max-width:min(560px,calc(100vw - 32px));background:rgba(11,16,22,.82);border-left:4px solid #4fc3e8;padding:12px 16px;border-radius:4px}
+#cap h2{margin:0 0 4px;font-size:18px}#cap p{margin:0;font-size:14px;line-height:1.5;color:#c9d6e2}
+#hint{position:fixed;left:16px;top:12px;font-size:12px;color:#8fa3b5}
+#intro{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(6,9,13,.92);z-index:5}
+#intro .card{display:grid;grid-template-columns:150px 1fr;gap:20px;max-width:760px;width:calc(100% - 32px);padding:24px;background:#121a23;border:1px solid #2b3c4d;border-radius:8px}
+#intro img{width:100%;object-fit:contain;border-radius:4px;background:#1c2530;min-height:60px}
+#intro .col{display:flex;flex-direction:column;gap:12px;align-items:center}
+#intro h1{margin:0 0 4px;font-size:22px}#intro table{border-collapse:collapse;font-size:14px;margin:10px 0 16px}
+#intro td{padding:3px 10px 3px 0;vertical-align:top}#intro td:first-child{color:#8fa3b5;white-space:nowrap}
+@media(max-width:560px){#intro .card{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div id="hint">Drag: look around · W A S D / arrows: walk · Scroll: zoom · H: hide interface</div>
+<div id="hud"></div>
+<div id="cap"><h2></h2><p></p></div>
+<div id="intro"><div class="card">
+  <div class="col"><img id="logo" src="assets/uitm-logo.png" alt="UiTM logo"><img id="photo" src="assets/photo.jpg" alt="Student photo"></div>
+  <div><h1>Networking Room</h1><div style="color:#8fa3b5;font-size:14px">3D 360° room tour · Three.js</div>
+  <table id="info"></table><button id="go">Enter room</button></div>
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ===== EDIT YOUR DETAILS HERE (shown on the intro card) =====
+const STUDENT = {
+  "Full name":"YOUR FULL NAME",
+  "Student ID":"2024XXXXXX",
+  "Program code":"CDIM262",
+  "Course":"IMS613 – Data Center Management",   // edit to exact course name
+  "Group":"CDIM2629A",
+  "Faculty":"Faculty of Information Science, UiTM",
+  "Prepared for":"LECTURER NAME",
+  "Date":"DD Month YYYY"
+};
+// ============================================================
+const T=THREE,$=id=>document.getElementById(id);
+$('info').innerHTML=Object.entries(STUDENT).map(([k,v])=>`<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+document.querySelectorAll('#intro img').forEach(i=>i.onerror=()=>i.style.display='none');
+
+const scene=new T.Scene();scene.background=new T.Color(0x0b0e12);
+const camera=new T.PerspectiveCamera(70,innerWidth/innerHeight,.05,60);camera.rotation.order='YXZ';
+const renderer=new T.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);document.body.prepend(renderer.domElement);
+
+const M=(c,o={})=>new T.MeshStandardMaterial(Object.assign({color:c,roughness:.7,metalness:.15},o));
+const box=(w,h,d,m,x,y,z,p=scene)=>{const o=new T.Mesh(new T.BoxGeometry(w,h,d),m);o.position.set(x,y,z);p.add(o);return o};
+const cyl=(r,h,m,x,y,z,p=scene,rx=0,rz=0)=>{const o=new T.Mesh(new T.CylinderGeometry(r,r,h,16),m);o.position.set(x,y,z);o.rotation.set(rx,0,rz);p.add(o);return o};
+function ctex(w,h,draw,rx=1,ry=1){const c=document.createElement('canvas');c.width=w;c.height=h;draw(c.getContext('2d'),w,h);
+  const t=new T.CanvasTexture(c);t.wrapS=t.wrapT=T.RepeatWrapping;t.repeat.set(rx,ry);t.anisotropy=8;return t}
+
+// ---------- Lights ----------
+scene.add(new T.HemisphereLight(0xdbe9ff,0x222831,.75));
+[[-3.5,3,-1],[3.5,3,-1],[0,3,2.6],[-3.5,3,2.6]].forEach(p=>{const l=new T.PointLight(0xeaf4ff,.55,16);l.position.set(...p);scene.add(l)});
+
+// ---------- Shell: raised floor, walls, ceiling ----------
+const floorTex=ctex(128,128,(g,w,h)=>{g.fillStyle='#8d949b';g.fillRect(0,0,w,h);g.strokeStyle='#5b6269';g.lineWidth=4;g.strokeRect(0,0,w,h);g.fillStyle='#a0a7ae';g.fillRect(6,6,w-12,h-12)},20,13.33);
+const floor=new T.Mesh(new T.PlaneGeometry(12,8),new T.MeshStandardMaterial({map:floorTex,roughness:.55}));floor.rotation.x=-Math.PI/2;scene.add(floor);
+const perfTex=ctex(64,64,(g,w,h)=>{g.fillStyle='#262b31';g.fillRect(0,0,w,h);g.fillStyle='#0a0c0e';for(let i=0;i<8;i++)for(let j=0;j<8;j++){g.beginPath();g.arc(4+i*8,4+j*8,2.2,0,7);g.fill()}g.strokeStyle='#4fc3e8';g.lineWidth=3;g.strokeRect(0,0,w,h)},8,2);
+const perf=new T.Mesh(new T.PlaneGeometry(4.8,1.2),new T.MeshStandardMaterial({map:perfTex}));perf.rotation.x=-Math.PI/2;perf.position.set(0,.004,-1);scene.add(perf);
+const wallM=M(0xd7dde3,{roughness:.9});
+[[0,-4,0,12],[0,4,Math.PI,12],[-6,0,Math.PI/2,8],[6,0,-Math.PI/2,8]].forEach(([a,b,r,w],i)=>{
+  const m=new T.Mesh(new T.PlaneGeometry(w,3.2),wallM);m.rotation.y=r;
+  if(i<2)m.position.set(a,1.6,b);else m.position.set(a,1.6,b);scene.add(m)});
+const ceil=new T.Mesh(new T.PlaneGeometry(12,8),M(0xeef2f5));ceil.rotation.x=Math.PI/2;ceil.position.y=3.2;scene.add(ceil);
+box(12,.1,.02,M(0x3a4650),0,.05,-3.99);box(12,.1,.02,M(0x3a4650),0,.05,3.99);box(.02,.1,8,M(0x3a4650),-5.99,.05,0);box(.02,.1,8,M(0x3a4650),5.99,.05,0);
+const lamp=new T.MeshBasicMaterial({color:0xfdfdf2});
+[-3.5,0,3.5].forEach(x=>[-1,2.6].forEach(z=>box(1.2,.04,.4,lamp,x,3.18,z)));
+
+// ---------- Device textures ----------
+const cache={};
+function dev(type,u){const k=type+u;if(cache[k])return cache[k];const W=600,H=50*u;
+  return cache[k]=ctex(W,H,(g)=>{
+    const bg={sw:'#2b313a',rt:'#1f3b57',pp:'#1b1f27',cm:'#0c0d10',srv:'#3a3f46',odf:'#d9b82b'}[type];g.fillStyle=bg;g.fillRect(0,0,W,H);
+    g.fillStyle='rgba(255,255,255,.12)';g.fillRect(0,0,W,3);
+    if(type==='sw'||type==='rt'){g.fillStyle='#0a0c0f';for(let r=0;r<2;r++)for(let c=0;c<12;c++)g.fillRect(190+c*30,8+r*20+(u>1?10:0),24,14);
+      g.fillStyle='#ffb02e';for(let c=0;c<4;c++)g.fillRect(552+c*0,6+c*10,0,0);g.fillStyle='#0a0c0f';g.fillRect(20,10,140,H-20);}
+    if(type==='pp'){for(let c=0;c<24;c++){g.fillStyle=c%4<2?'#2d7dd2':'#f2c230';g.fillRect(30+c*23,8,18,6);g.fillStyle='#07080a';g.fillRect(30+c*23,16,18,22)}}
+    if(type==='odf'){g.fillStyle='#8a6d00';for(let c=0;c<12;c++){g.fillRect(40+c*45,10,32,H-20);g.fillStyle='#f58220';g.fillRect(48+c*45,H-26,16,14);g.fillStyle='#8a6d00'}}
+    if(type==='cm'){g.fillStyle='#2a2d33';for(let c=0;c<30;c++)g.fillRect(24+c*19,8,6,H-16)}
+    if(type==='srv'){g.fillStyle='#111';for(let c=0;c<8;c++)g.fillRect(24+c*56,8,48,H-16);g.fillStyle='#888';for(let c=0;c<30;c++)g.fillRect(480+(c%6)*18,8+Math.floor(c/6)*(H/6),12,2)}
+  })}
+const ledGeo=new T.BoxGeometry(.008,.008,.004);
+const ledPos=[];
+
+// ---------- Racks ----------
+const patterns={
+  access:[['sw',1],['pp',1],['cm',1]],
+  core:[['rt',2],['cm',1],['sw',1],['sw',1],['cm',1],['sw',1],['pp',1],['cm',1],['srv',2],['srv',2]],
+  mdf:[['odf',2],['pp',1],['pp',1],['cm',1],['pp',1],['pp',1],['cm',1],['sw',1],['cm',1]]
+};
+const rackMat=M(0x14171c,{roughness:.5}),rail=M(0x9aa3ab,{metalness:.7,roughness:.3}),sideM=M(0x15181c);
+const racks=[];
+function rack(x,z,rot,kind){const g=new T.Group();g.position.set(x,0,z);g.rotation.y=rot;scene.add(g);
+  box(.6,2,1,rackMat,0,1,0,g);box(.025,1.9,.02,rail,-.275,1,.5,g);box(.025,1.9,.02,rail,.275,1,.5,g);
+  let y=.12,i=0;const seq=patterns[kind];
+  while(true){const [t,u]=seq[i++%seq.length],h=u*.0445;if(y+h>1.95)break;
+    const fm=new T.MeshStandardMaterial({map:dev(t,u),roughness:.5,metalness:.3});
+    const o=new T.Mesh(new T.BoxGeometry(.54,h-.002,.02),[sideM,sideM,sideM,sideM,fm,sideM]);o.position.set(0,y+h/2,.51);g.add(o);
+    if(t==='sw'||t==='rt')for(let r=0;r<2;r++)for(let c=0;c<12;c++)ledPos.push([g,-.25+c*.0125*(t==='sw'?1:1)+.0,y+h/2+(r?-.007:.012),.523,c]);
+    y+=h}
+  racks.push(g);return g}
+for(let i=0;i<7;i++){const x=-2+i*.65;rack(x,-2.6,0,i==0?'core':'access');rack(x,.6,Math.PI,i==3?'core':'access')}
+for(let i=0;i<3;i++)rack(-5.4,-1.3+i*.65,Math.PI/2,'mdf');
+scene.updateMatrixWorld(true);
+const leds=new T.InstancedMesh(ledGeo,new T.MeshBasicMaterial({color:0xffffff}),ledPos.length);
+const dummy=new T.Object3D(),col=new T.Color();
+ledPos.forEach(([g,lx,ly,lz],i)=>{const p=g.localToWorld(new T.Vector3(lx,ly,lz));dummy.position.copy(p);dummy.rotation.y=g.rotation.y;dummy.updateMatrix();leds.setMatrixAt(i,dummy.matrix);leds.setColorAt(i,col.set(0x31e981))});
+scene.add(leds);
+const LC=[0x31e981,0x31e981,0x31e981,0xffb02e,0x16301f];
+setInterval(()=>{for(let i=0;i<ledPos.length;i++)if(Math.random()<.25)leds.setColorAt(i,col.set(LC[Math.random()*LC.length|0]));leds.instanceColor.needsUpdate=true},350);
+
+// ---------- Cable trays, drops, ladder rods ----------
+const tray=M(0xe8891d,{metalness:.5,roughness:.4});
+[[-2.6],[.6]].forEach(([z])=>{box(5,.04,.45,tray,0,2.55,z);box(5,.1,.02,tray,0,2.6,z-.22);box(5,.1,.02,tray,0,2.6,z+.22)});
+box(.45,.04,3.2,tray,-2.6,2.55,-1);box(.45,.04,.45,tray,-5.4,2.55,-.65);box(3.1,.04,.45,tray,-4,2.55,-.65);
+for(let x=-2.2;x<=2.2;x+=1.1)[-2.6,.6].forEach(z=>cyl(.01,.65,M(0x888),x,2.88,z));
+const cc=[0x2d7dd2,0xf2c230,0xe5484d,0x31c48d,0xff9f43];
+for(let i=0;i<5;i++)box(4.8,.025,.025,M(cc[i]),0,2.585+i*.01,-2.7+i*.1);
+for(let i=0;i<5;i++)box(4.8,.025,.025,M(cc[i]),0,2.585+i*.01,.5+i*.1);
+for(let i=0;i<7;i++){const x=-2+i*.65;[-2.6,.6].forEach((z,j)=>cyl(.022,.55,M(cc[(i+j)%5]),x,2.27,z+(j?.2:-.2)))}
+
+// ---------- Cold aisle containment (glass roof + end doors) ----------
+const glass=new T.MeshStandardMaterial({color:0x7fd0f0,transparent:true,opacity:.18,roughness:.1,side:T.DoubleSide});
+box(4.6,.02,2.2,glass,-.05,2.01,-1);box(.03,2,2.2,glass,-2.35,1,-1);box(.03,2,2.2,glass,2.25,1,-1);
+
+// ---------- Precision cooling units ----------
+const gril=ctex(128,256,(g,w,h)=>{g.fillStyle='#e9edf0';g.fillRect(0,0,w,h);g.fillStyle='#9aa4ac';for(let y=60;y<h-10;y+=7)g.fillRect(12,y,w-24,3);g.fillStyle='#0b2a3a';g.fillRect(30,12,68,32);g.fillStyle='#4fc3e8';g.font='bold 18px sans-serif';g.fillText('18.5°C',36,36)});
+[-1.5,1.5].forEach(z=>{const g=new T.Group();g.position.set(5.35,0,z);scene.add(g);box(1.1,2,.9,M(0xcfd6dc),0,1,0,g);
+  const f=new T.Mesh(new T.PlaneGeometry(.88,1.95),new T.MeshStandardMaterial({map:gril}));f.rotation.y=-Math.PI/2;f.position.set(-.551,1,0);g.add(f)});
+cyl(.04,7,M(0x2d7dd2),5.8,.12,0,scene,Math.PI/2,0).rotation.set(Math.PI/2,0,0);cyl(.04,7,M(0xe5484d),5.9,.12,0,scene,Math.PI/2,0).rotation.set(Math.PI/2,0,0);
+box(.04,.01,6,M(0x2d7dd2),4.6,.015,0);
+
+// ---------- Door, access control, safety ----------
+box(1.1,2.2,.04,M(0x2c333b),-4.5,1.1,3.99);box(.9,2.1,.06,M(0x6f7b86,{metalness:.6}),-4.5,1.05,3.95);cyl(.015,.25,M(0xddd,{metalness:.9}),-4.1,1.05,3.9,scene,0,0).rotation.z=Math.PI/2;
+box(.1,.16,.04,M(0x111),-3.7,1.35,3.97);box(.012,.012,.01,new T.MeshBasicMaterial({color:0x31e981}),-3.7,1.41,3.945);
+box(.1,.1,.04,M(0x1b3a5c),-3.7,1.12,3.97);box(.05,.05,.01,new T.MeshBasicMaterial({color:0x4fc3e8}),-3.7,1.12,3.945);
+box(.14,.18,.05,M(0xe5484d),-3.35,1.3,3.97);box(.07,.07,.02,M(0xffd23f),-3.35,1.3,3.935);
+box(.3,.42,.06,M(0xc22b30),-2.9,1.4,3.96);box(.2,.04,.01,new T.MeshBasicMaterial({color:0x31e981}),-2.9,1.5,3.925);
+cyl(.07,.4,M(0xd63a3a),-5.4,.3,3.9);cyl(.02,.08,M(0x111),-5.4,.54,3.9);
+const cams=[];
+[[5.6,-3.6],[-5.6,-3.6],[5.6,3.6],[-3,3.7]].forEach(([x,z])=>{const p=new T.Group();p.position.set(x,2.95,z);p.userData.base=Math.atan2(-(0-x),-(0-z));p.rotation.y=p.userData.base;scene.add(p);
+  const b=new T.Group();b.rotation.x=-.4;p.add(b);box(.12,.12,.28,M(0xf2f2f2),0,0,0,b);cyl(.045,.08,M(0x111),0,0,-.17,b,Math.PI/2,0);
+  const l=box(.02,.02,.01,new T.MeshBasicMaterial({color:0xff2d2d}),.04,.05,-.141,b);p.userData.led=l;cams.push(p);box(.05,.2,.05,M(0x444),0,.12,0.02,p)});
+const smoke=[];[[-2,-1],[2,-1],[0,2.4],[-4,2]].forEach(([x,z])=>{cyl(.07,.04,M(0xfafafa),x,3.18,z);const l=box(.01,.01,.01,new T.MeshBasicMaterial({color:0xff2d2d}),x+.04,3.15,z);smoke.push(l)});
+box(.3,.22,.05,M(0xe8e8e8),5.4,1.5,3.96);box(.12,.08,.01,M(0x3a8dde),5.4,1.5,3.93);
+
+// ---------- Fire suppression (clean agent) ----------
+const red=M(0xd63a3a,{metalness:.4,roughness:.4}),gold=M(0xd4a017,{metalness:.8,roughness:.3});
+[3.6,4.1,4.6].forEach(x=>{cyl(.14,1.2,red,x,.7,-3.75);cyl(.04,.1,gold,x,1.35,-3.75);cyl(.02,.35,red,x,1.5,-3.75)});
+cyl(.03,1.2,red,3.6,1.55,-3.75,scene,0,Math.PI/2);
+cyl(.03,1.7,red,3.6,2.4,-3.75);cyl(.03,10,red,-1.4,3.05,-3.75,scene,0,Math.PI/2);
+[-3.5,3.5].forEach(x=>cyl(.03,6.2,red,x,3.05,-.65,scene,Math.PI/2,0));
+[[-3.5,-3],[-3.5,1.5],[3.5,-3],[3.5,1.5],[0,-3.7]].forEach(([x,z])=>{const n=new T.Mesh(new T.ConeGeometry(.05,.1,12),gold);n.position.set(x,2.98,z);n.rotation.x=Math.PI;scene.add(n);cyl(.015,.1,red,x,3.07,z)});
+box(.18,.1,.08,M(0xff6a00),-1.5,3.1,3.9);
+
+// ---------- Environmental sensors ----------
+box(.08,.06,.03,M(0x20c997),2.35,1.5,-2.75);
+
+// ---------- Labels ----------
+const labels=[];
+function label(txt,x,y,z,w=1.7){const c=document.createElement('canvas');c.width=512;c.height=96;const g=c.getContext('2d');
+  g.fillStyle='rgba(11,16,22,.85)';g.fillRect(0,0,512,96);g.fillStyle='#4fc3e8';g.fillRect(0,0,8,96);g.fillStyle='#fff';g.font='600 32px sans-serif';g.textBaseline='middle';g.fillText(txt,24,48,470);
+  const s=new T.Sprite(new T.SpriteMaterial({map:new T.CanvasTexture(c),depthTest:false}));s.scale.set(w,w*96/512,1);s.position.set(x,y,z);s.renderOrder=9;scene.add(s);labels.push(s)}
+label('Access control & EPO',-3.5,1.85,3.7);label('Fire extinguisher',-5.4,.95,3.7,1.4);label('Cold aisle containment',0,1.75,-1,1.9);
+label('Rack row A: access layer',0,2.2,-2.6,1.9);label('Rack row B: core / distribution',0,2.2,.6,2);
+label('MDF: patch & fibre panels',-5.0,2.25,-.65,1.9);label('Overhead cable tray',0,2.9,-1,1.6);
+label('Precision cooling (CRAC)',5,2.3,0,1.9);label('Clean-agent cylinders',4.1,1.95,-3.6,1.7);
+label('Smoke detector (dual-zone)',2,2.95,-1,1.9);label('CCTV',5.5,2.65,-3.5,.8);label('Leak detection cable',4.6,.3,1,1.7);
+
+// ---------- Tour ----------
+const S=[
+ {t:'Entrance & physical security',d:'Single controlled door with card reader and fingerprint biometric (two-factor). Emergency Power Off (EPO) button and fire-alarm panel are beside the door; extinguisher is by the exit.',p:[-4.5,1.65,3.2],l:[-3.5,1.3,4]},
+ {t:'Room overview',d:'The Networking Room is 12 m × 8 m with a 0.6 m raised floor, 3.2 m ceiling and LED panels. It houses the core, distribution and access network equipment of the data center.',p:[-4.8,1.7,3.4],l:[1,1.2,-1.5]},
+ {t:'Cold aisle containment',d:'Two rack rows face each other across a cold aisle with perforated floor tiles. A glass roof and end doors keep cold air from mixing with hot exhaust, improving cooling efficiency.',p:[-1.9,1.65,-1],l:[2.2,1.3,-1]},
+ {t:'Rack row A: access layer',d:'Racks hold access switches, 24-port patch panels and horizontal cable managers. Port LEDs show link and activity status. Rack A1 carries the core router.',p:[0,1.6,-.9],l:[0,1.3,-2.1]},
+ {t:'Rack row B: core / distribution',d:'Distribution and core switches with servers for network services such as DNS, DHCP, NTP and monitoring. Colour-coded patch cables identify the network segment.',p:[.4,1.6,-1.1],l:[.4,1.3,.1]},
+ {t:'Overhead cable tray',d:'Orange cable trays carry copper and fibre above the racks, separate from power. Colour-coded drops enter each rack from the top, which keeps the raised floor clear for airflow.',p:[0,1.6,-1],l:[0,2.6,-1.6]},
+ {t:'Main Distribution Frame (MDF)',d:'The MDF receives ISP and campus backbone links. Fibre panels (ODF) and patch panels terminate incoming lines before they are cross-connected to the core.',p:[-3.7,1.6,-.65],l:[-5.4,1.4,-.65]},
+ {t:'Precision cooling',d:'Two CRAC units on the east wall supply chilled air under the raised floor into the cold aisle. Blue and red pipes show chilled water supply and return. A leak-detection cable runs along the unit base.',p:[2.8,1.6,0],l:[5.3,1.1,0]},
+ {t:'Fire suppression',d:'A clean-agent system (e.g. FM-200 / Novec 1230) uses cylinders on the north wall, red piping and ceiling nozzles. It discharges without water, which protects live electronic equipment.',p:[3.9,1.6,-1.4],l:[3.9,1.7,-3.8]},
+ {t:'Fire detection',d:'Dual smoke detectors are cross-zoned so that both must trigger before agent release. A manual release / abort station and an alarm strobe are installed near the exit.',p:[1.2,1.6,1.8],l:[1,3.1,-.6]},
+ {t:'Surveillance',d:'Four CCTV cameras cover all corners and the door. Footage goes to the Security Operation Center and is recorded for audit.',p:[-3,1.6,.5],l:[-4.5,2.2,3.9]},
+ {t:'360° view',d:'Full rotation of the room: racks, cooling, fire protection and access control in one view.',p:[0,1.65,2.2],l:[0,1.5,-3],spin:1}
+];
+let yaw=0,pitch=0;const pos=new T.Vector3();
+const look=(p,l)=>{const dx=l[0]-p[0],dy=l[1]-p[1],dz=l[2]-p[2];return{yaw:Math.atan2(-dx,-dz),pitch:Math.atan2(dy,Math.hypot(dx,dz))}};
+function setView(s){const a=look(s.p,s.l);pos.set(...s.p);yaw=a.yaw;pitch=a.pitch}
+setView(S[1]);
+let idx=-1,auto=false,tw=null;const ease=t=>t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+function goto(i,dwell=true){idx=(i+S.length)%S.length;const s=S[idx],a=look(s.p,s.l);
+  $('cap').querySelector('h2').textContent=s.t;$('cap').querySelector('p').textContent=s.d;
+  let dy=a.yaw-yaw;dy=Math.atan2(Math.sin(dy),Math.cos(dy));
+  tw={t:0,dur:2.6,fp:pos.clone(),fy:yaw,fpi:pitch,tp:new T.Vector3(...s.p),ty:yaw+dy,tpi:a.pitch,hold:0,spin:s.spin,sy:a.yaw}}
+function stopTour(){auto=false;tw=null;$('auto').classList.remove('on');$('auto').textContent='Start tour'}
+function toggleAuto(){if(auto){stopTour();return}auto=true;$('auto').classList.add('on');$('auto').textContent='Stop tour';goto(idx<0?0:idx)}
+
+// ---------- UI ----------
+const btns=[['auto','Start tour',toggleAuto],['prev','Prev',()=>{goto(idx-1)}],['next','Next',()=>{goto(idx+1)}],
+  ['lab','Labels',e=>{const on=!labels[0].visible;labels.forEach(s=>s.visible=on);e.target.classList.toggle('on',on)}],
+  ['capb','Captions',e=>{const c=$('cap');c.style.display=c.style.display==='none'?'':'none'}],
+  ['infob','Info card',()=>$('intro').style.display='flex'],['hide','Hide UI (H)',()=>toggleUI()]];
+btns.forEach(([id,t,f])=>{const b=document.createElement('button');b.id=id;b.textContent=t;b.onclick=f;$('hud').appendChild(b)});
+$('lab').classList.add('on');
+let ui=true;function toggleUI(){ui=!ui;['hud','cap','hint'].forEach(i=>$(i).style.display=ui?'':'none')}
+$('go').onclick=()=>$('intro').style.display='none';
+$('cap').querySelector('h2').textContent='Networking Room';$('cap').querySelector('p').textContent='Press Start tour for the guided 360° walkthrough, or look around freely.';
+
+// ---------- Input ----------
+const keys={};addEventListener('keydown',e=>{keys[e.code]=1;if(e.code==='KeyH')toggleUI();});addEventListener('keyup',e=>keys[e.code]=0);
+let drag=false,lx=0,ly=0;const cv=renderer.domElement;
+cv.onpointerdown=e=>{drag=true;lx=e.clientX;ly=e.clientY;cv.style.cursor='grabbing'};
+addEventListener('pointerup',()=>{drag=false;cv.style.cursor='grab'});
+addEventListener('pointermove',e=>{if(!drag)return;if(auto||tw)stopTour();yaw-=(e.clientX-lx)*.004;pitch=Math.max(-1.4,Math.min(1.4,pitch-(e.clientY-ly)*.004));lx=e.clientX;ly=e.clientY});
+cv.addEventListener('wheel',e=>{camera.fov=Math.max(35,Math.min(90,camera.fov+e.deltaY*.03));camera.updateProjectionMatrix()},{passive:true});
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+
+// ---------- Loop ----------
+const clock=new T.Clock();
+(function loop(){requestAnimationFrame(loop);const dt=Math.min(clock.getDelta(),.05),t=clock.elapsedTime;
+  if(tw){tw.t+=dt;
+    if(tw.t<tw.dur){const k=ease(tw.t/tw.dur);pos.lerpVectors(tw.fp,tw.tp,k);yaw=tw.fy+(tw.ty-tw.fy)*k;pitch=tw.fpi+(tw.tpi-tw.fpi)*k}
+    else{pos.copy(tw.tp);const dw=tw.spin?16:8,h=tw.t-tw.dur;
+      if(tw.spin)yaw=tw.ty-(h/dw)*Math.PI*2;else yaw=tw.ty;pitch=tw.tpi;
+      if(h>dw){tw=null;if(auto&&idx<S.length-1)goto(idx+1);else stopTour()}}
+  }else{const f=(keys.KeyW||keys.ArrowUp?1:0)-(keys.KeyS||keys.ArrowDown?1:0),r=(keys.KeyD?1:0)-(keys.KeyA?1:0),tr=(keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0);
+    yaw-=tr*dt*1.6;if(f||r){if(auto)stopTour();pos.x+=(-Math.sin(yaw)*f+Math.cos(yaw)*r)*2.2*dt;pos.z+=(-Math.cos(yaw)*f-Math.sin(yaw)*r)*2.2*dt}}
+  pos.x=Math.max(-5.5,Math.min(5.5,pos.x));pos.z=Math.max(-3.7,Math.min(3.7,pos.z));
+  camera.position.copy(pos);camera.rotation.set(pitch,yaw,0);
+  const on=Math.sin(t*5)>0;cams.forEach(c=>{c.rotation.y=c.userData.base+Math.sin(t*.5)*.35;c.userData.led.visible=on});smoke.forEach(s=>s.visible=on);
+  renderer.render(scene,camera)})();
+</script>
+</body>
+</html>
